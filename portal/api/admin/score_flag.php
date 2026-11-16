@@ -1,0 +1,21 @@
+<?php
+declare(strict_types=1);
+require_once __DIR__ . '/../helpers/auth.php';
+$user = requireRole(['instructor']);
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') json(['error' => 'Method not allowed.'], 405);
+$input = requestJson();
+$courseId = filter_var($input['course_id'] ?? null, FILTER_VALIDATE_INT);
+$studentRecordId = filter_var($input['student_id'] ?? null, FILTER_VALIDATE_INT);
+$type = (string) ($input['type'] ?? '');
+$note = trim((string) ($input['note'] ?? ''));
+if (!$courseId || !$studentRecordId || !in_array($type, ['missing', 'disputed'], true) || mb_strlen($note) < 5 || mb_strlen($note) > 1000) json(['error' => 'Choose a learner and flag type, then provide a short note.'], 422);
+$pdo = db();
+requireCourseScope($pdo, $user, $courseId);
+$enrollment = $pdo->prepare("SELECT id FROM enrollments WHERE student_id = ? AND course_id = ? AND status = 'active'");
+$enrollment->execute([$studentRecordId, $courseId]);
+if (!$enrollment->fetchColumn()) json(['error' => 'The learner is outside your course.'], 403);
+$insert = $pdo->prepare("INSERT INTO score_flags (student_id, course_id, flagged_by, flag_type, note) VALUES (?, ?, ?, ?, ?)");
+$insert->execute([$studentRecordId, $courseId, $user['id'], $type, $note]);
+$id = (int) $pdo->lastInsertId();
+audit($pdo, (int) $user['id'], 'score_flag_create', 'score_flag', $id, ['course_id' => $courseId, 'type' => $type]);
+json(['ok' => true, 'id' => $id], 201);

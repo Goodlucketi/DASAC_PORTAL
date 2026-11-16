@@ -1,0 +1,26 @@
+<?php
+declare(strict_types=1);
+require_once __DIR__ . '/../helpers/auth.php';
+$user = requireRole(['instructor']);
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') json(['error' => 'Method not allowed.'], 405);
+$input = requestJson();
+$scoreId = filter_var($input['score_id'] ?? null, FILTER_VALIDATE_INT);
+$test = filter_var($input['test_score'] ?? null, FILTER_VALIDATE_FLOAT);
+$exam = filter_var($input['exam_score'] ?? null, FILTER_VALIDATE_FLOAT);
+$reason = trim((string) ($input['reason'] ?? ''));
+if (!$scoreId || $test === false || $exam === false || mb_strlen($reason) < 8 || mb_strlen($reason) > 1000) json(['error' => 'Enter valid proposed scores and a reason of at least 8 characters.'], 422);
+$pdo = db();
+$lookup = $pdo->prepare('SELECT sc.course_id, c.test_max, c.exam_max, sc.status FROM scores sc JOIN courses c ON c.id = sc.course_id WHERE sc.id = ?');
+$lookup->execute([$scoreId]);
+$score = $lookup->fetch();
+if (!$score) json(['error' => 'Score not found.'], 404);
+requireCourseScope($pdo, $user, (int) $score['course_id']);
+if ($score['status'] === 'draft' || $test < 0 || $test > (float) $score['test_max'] || $exam < 0 || $exam > (float) $score['exam_max']) json(['error' => 'Only verified or published scores with valid proposed values can be amended.'], 422);
+$pending = $pdo->prepare('SELECT id FROM score_amendments WHERE score_id = ? AND status = ?');
+$pending->execute([$scoreId, 'pending']);
+if ($pending->fetchColumn()) json(['error' => 'A score amendment is already pending for this result.'], 409);
+$insert = $pdo->prepare('INSERT INTO score_amendments (score_id, requested_by, test_score, exam_score, request_reason) VALUES (?, ?, ?, ?, ?)');
+$insert->execute([$scoreId, $user['id'], $test, $exam, $reason]);
+$id = (int) $pdo->lastInsertId();
+audit($pdo, (int) $user['id'], 'score_amendment_submit', 'score_amendment', $id, ['score_id' => $scoreId]);
+json(['ok' => true, 'id' => $id], 201);

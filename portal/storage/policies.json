@@ -1,0 +1,6 @@
+{
+  "minAttendance": 75,
+  "passMark": 50,
+  "testWeight": 30,
+  "examWeight": 70
+}
